@@ -2,6 +2,7 @@
 
 namespace App\Controller;
 
+use App\Entity\Author;
 use App\Entity\Book;
 use App\Repository\AuthorRepository;
 use App\Repository\BookRepository;
@@ -99,40 +100,24 @@ class BookController extends AbstractController
         return new JsonResponse(
             $jsonBook,
             Response::HTTP_CREATED,
-            ['location' => $location],
+            ['Location' => $location],
             true
         );
     }
 
-    #[Route('/api/books/{id}', name:'app_book_update', methods: ['PUT'])]
-    public function updateBook(
+    #[Route('/api/books/{id}', name:"updateAuthors", methods:['PUT'])]
+    public function updateAuthor(
+        Request $request, 
         SerializerInterface $serializer,
-        EntityManagerInterface $em,
-        Book $currentBook,
-        AuthorRepository $authorRepository,
-        Request $request,
+        Author $currentAuthor, 
+        EntityManagerInterface $em
+        ): JsonResponse {
 
-    ): JsonResponse 
-    {
-        $updatedBook = $serializer->deserialize(
-            $request->getContent(), 
-            Book::class, 
-            'json',
-            [AbstractNormalizer::OBJECT_TO_POPULATE => $currentBook]
-        );
-        $content = $request->toArray();
-
-        $idAuthor = $content['idAuthor'] ?? -1;
-
-        $updatedBook->setAuthor($authorRepository->find($idAuthor));
-
-        $em->persist($updatedBook);
+        $updatedAuthor = $serializer->deserialize($request->getContent(), Author::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentAuthor]);
+        $em->persist($updatedAuthor);
         $em->flush();
 
+        return new JsonResponse(null, JsonResponse::HTTP_NO_CONTENT);
 
-        return new JsonResponse(
-            $updatedBook,
-            JsonResponse::HTTP_NO_CONTENT,
-        );
     }
 }
