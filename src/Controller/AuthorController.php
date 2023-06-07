@@ -49,13 +49,12 @@ class AuthorController extends AbstractController
         );
     }
 
-    #[Route('/api/authors/{id}', name: 'deleteAuthor', methods: ['DELETE'])]
+    #[Route('/api/authors/{id}', name: 'app_author_delete', methods: ['DELETE'])]
     public function deleteAuthor(Author $author, EntityManagerInterface $em): JsonResponse {
         
         $em->remove($author);
         
         $em->flush();
-        dd($author->getBooks());
         return new JsonResponse(null, Response::HTTP_NO_CONTENT);
     }
 }
