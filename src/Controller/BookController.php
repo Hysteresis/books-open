@@ -42,7 +42,6 @@ class BookController extends AbstractController
     {
         $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
 
-        
         return new JsonResponse(
             $jsonBook,
             Response::HTTP_OK,

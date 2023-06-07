@@ -32,7 +32,7 @@ class AuthorController extends AbstractController
         );
     }
 
-    #[Route('/api/authors/{id}', name: 'app_author', methods: ['GET'])]
+    #[Route('/api/authors/{id}', name: 'app_author_id', methods: ['GET'])]
     public function getOneAuthor(
         Author $author, 
         SerializerInterface $serializer,
