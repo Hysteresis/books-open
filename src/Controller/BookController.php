@@ -7,6 +7,8 @@ use App\Entity\Book;
 use App\Repository\AuthorRepository;
 use App\Repository\BookRepository;
 use Doctrine\ORM\EntityManagerInterface;
+use Hateoas\Serializer\SerializerInterface as SerializerSerializerInterface;
+use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -14,7 +16,12 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
-use Symfony\Component\Serializer\SerializerInterface;
+// use JMS\Serializer\Serializer;
+use JMS\Serializer\SerializationContext;
+use JMS\Serializer\SerializerInterface;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 class BookController extends AbstractController
 {
@@ -22,10 +29,27 @@ class BookController extends AbstractController
     public function getAllBooks(
         BookRepository $bookRepository, 
         SerializerInterface $serializer,
+        Request $request,
+        TagAwareCacheInterface $cachePool,
         ): JsonResponse
     {
-        $bookList = $bookRepository->findAll();
-        $jsonBookList = $serializer->serialize($bookList, 'json', ['groups' => 'getBooks']);
+        $page = $request->get("page", 1);
+        $limit = $request->get("limit", 3);
+        // nommer la requete que l'on veut mettre en cache
+        // je créé un identifiant
+        $idCache = "getAllBooks-" . $page . "-" . $limit;
+
+        //? Mise en cache de la requête
+        // si idCache est deja en cache on recupère l'élément qui est mis en cache
+        // Sinon on joue la fonction avec ITemInterface et on met le resultat en cache et on le retourne
+        $jsonBookList = $cachePool->get($idCache, function (ItemInterface $item) use ($bookRepository, $page, $limit, $serializer) {
+            $item->tag("booksCache");
+            $bookList = $bookRepository->findAllWithPagination($page, $limit);
+            $context = SerializationContext::create()->setGroups(['getBooks']);
+            return $serializer->serialize($bookList, 'json', $context);
+        });
+
+
 
         return new JsonResponse(
             $jsonBookList,
@@ -38,11 +62,13 @@ class BookController extends AbstractController
     #[Route('/api/books/{id}', name: 'app_book_id', methods: ['GET'])]
     public function getOneBook(
         Book $book,
-        SerializerInterface $serializer, 
+        SerializerInterface $serializer,
         ): JsonResponse
     {
-        $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
 
+        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $jsonBook = $serializer->serialize($book, 'json', $context );
+        
         return new JsonResponse(
             $jsonBook,
             Response::HTTP_OK,
@@ -52,11 +78,14 @@ class BookController extends AbstractController
     }
 
     #[Route('/api/books/{id}', name: 'app_book_delete', methods: ['DELETE'])]
+    #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits pour supprimer un livre')]
     public function deleteBook(
         Book $book, 
-        EntityManagerInterface $em
+        EntityManagerInterface $em,
+        TagAwareCacheInterface $cachePool,
         ): JsonResponse
     {
+        $cachePool->invalidateTags(['booksCache']);
         $em->remove($book);
         $em->flush();
 
@@ -67,16 +96,27 @@ class BookController extends AbstractController
     }
 
     #[Route('/api/books', name: 'app_book_create', methods: ['POST'])]
+    #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits suffisant pour créer un livre')]
     public function createBook(
         Request $request,
         SerializerInterface $serializer,
         EntityManagerInterface $em,
         UrlGeneratorInterface $urlGenerator,
         AuthorRepository $authorRepository,
+        ValidatorInterface $validator,
     ): JsonResponse
     {
         // tranforme json en objet $book
         $book = $serializer->deserialize($request->getContent(), Book::class, 'json' );
+
+        //verifier si il y a des erreurs
+        $errors = $validator->validate($book);
+        if($errors->count() > 0){
+            return new JsonResponse($serializer->serialize($errors, 'json'), JsonResponse::HTTP_BAD_REQUEST, [], true);
+        }
+        
+        $em->persist($book);
+        $em->flush();
         
         // recuperer les donnes de la requete et les stocker dans un tableau
         $content = $request->toArray();
@@ -85,10 +125,9 @@ class BookController extends AbstractController
 
         $book->setAuthor($authorRepository->find($idAuthor));
         
-        $em->persist($book);
-        $em->flush();
         //on renvoie le $book en json dans la response car c'est une pratique
-        $jsonBook = $serializer->serialize($book, 'json', ['groups' => 'getBooks']);
+        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $jsonBook = $serializer->serialize($book, 'json', $context);
 
         //on creer l'url sur laquelle le livre peut etre trouvé
         $location = $urlGenerator->generate(
@@ -105,19 +144,30 @@ class BookController extends AbstractController
         );
     }
 
-    #[Route('/api/books/{id}', name:"updateAuthors", methods:['PUT'])]
-    public function updateAuthor(
+    #[Route('/api/books/{id}', name:"app_book_update", methods:['PUT'])]
+    public function updateBook(
         Request $request, 
         SerializerInterface $serializer,
-        Author $currentAuthor, 
-        EntityManagerInterface $em
-        ): JsonResponse {
+        Book $currentBook, EntityManagerInterface $em, AuthorRepository $authorRepository, 
+        ValidatorInterface $validator,
+        ): JsonResponse 
+        {
+        $updatedBook = $serializer->deserialize($request->getContent(), Book::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentBook]);
 
-        $updatedAuthor = $serializer->deserialize($request->getContent(), Author::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentAuthor]);
-        $em->persist($updatedAuthor);
+        // On vérifie les erreurs
+        $errors = $validator->validate($updatedBook);
+        if ($errors->count() > 0) {
+            return new JsonResponse($serializer->serialize($errors, 'json'), JsonResponse::HTTP_BAD_REQUEST, [], true);
+        }
+
+        $content = $request->toArray();
+        $idAuthor = $content['idAuthor'] ?? -1;
+
+        $updatedBook->setAuthor($authorRepository->find($idAuthor));
+
+        $em->persist($updatedBook);
         $em->flush();
 
         return new JsonResponse(null, JsonResponse::HTTP_NO_CONTENT);
-
     }
 }

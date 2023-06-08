@@ -5,6 +5,7 @@ namespace App\Controller;
 use App\Entity\Author;
 use App\Repository\AuthorRepository;
 use Doctrine\ORM\EntityManagerInterface;
+use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -13,8 +14,10 @@ use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Routing\Generator\UrlGenerator;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Serializer\Normalizer\AbstractNormalizer;
-use Symfony\Component\Serializer\SerializerInterface;
-
+use JMS\Serializer\SerializationContext;
+use JMS\Serializer\SerializerInterface;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 class AuthorController extends AbstractController
 {
@@ -22,11 +25,25 @@ class AuthorController extends AbstractController
     public function getAllAuthor(
         AuthorRepository $authorRepository, 
         SerializerInterface $serializer,
+        Request $request,
+        TagAwareCacheInterface $cache,
         ): JsonResponse
     {
+        $page = $request->get('page', 1);
+        $limit = $request->get('limit', 3);
+
+        $idCache = "getAllAuthor-" . $page . "-" . $limit;
+
+        $jsonAuthorList = $cache->get($idCache, function(ItemInterface $item) use($authorRepository, $page, $limit, $serializer){
+            $item->tag("authorCache");
+            $authorList = $authorRepository->findAllWithPagination($page, $limit);
+            $context = SerializationContext::create()->setGroups(['getBooks']);
+            return $serializer->serialize($authorList, 'json', $context);
+        });
+
         
-        $authorList = $authorRepository->findAll();
-        $jsonAuthorList = $serializer->serialize($authorList, 'json', ['groups' => 'getAuthors']);
+
+        // $jsonAuthorList = $serializer->serialize($authorList, 'json', ['groups' => 'getAuthors']);
 
         return new JsonResponse(
             $jsonAuthorList,
@@ -42,8 +59,8 @@ class AuthorController extends AbstractController
         SerializerInterface $serializer,
         ): JsonResponse
     {
-        
-        $jsonAuthorList = $serializer->serialize($author, 'json', ['groups' => 'getAuthors']);
+        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $jsonAuthorList = $serializer->serialize($author, 'json', $context);
 
         return new JsonResponse(
             $jsonAuthorList,
@@ -54,10 +71,16 @@ class AuthorController extends AbstractController
     }
 
     #[Route('/api/authors/{id}', name: 'app_author_delete', methods: ['DELETE'])]
-    public function deleteAuthor(Author $author, EntityManagerInterface $em): JsonResponse {
+    #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits pour effacer un auteur')]
+    public function deleteAuthor(
+        Author $author,
+        EntityManagerInterface $em,
+        TagAwareCacheInterface $cache,
+        ): JsonResponse {
         
+        $cache->invalidateTags(['authorCache']);
+
         $em->remove($author);
-        
         $em->flush();
         return new JsonResponse(null, Response::HTTP_NO_CONTENT);
     }
@@ -79,6 +102,7 @@ class AuthorController extends AbstractController
     }
 
     #[Route('/api/authors', name: 'app_author_create', methods: ['POST'])]
+    #[IsGranted('ROLE_ADMIN', message: 'Vous n\'avez pas les droits pour créer un auteur')]
     public function createAuthor(
         Request $request, 
         SerializerInterface $serializer,
@@ -91,8 +115,8 @@ class AuthorController extends AbstractController
 
         $em->persist($author);
         $em->flush();
-
-        $jsonAuthor = $serializer->serialize($author, 'json', ['groups' => 'getAuthors']);
+        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $jsonAuthor = $serializer->serialize($author, 'json', $context);
         $location = $urlGenerator->generate('app_author_id', ['id' => $author->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
 
         return new JsonResponse($jsonAuthor, Response::HTTP_CREATED, ["Location" => $location], true);	
