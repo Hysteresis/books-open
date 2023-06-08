@@ -37,7 +37,7 @@ class AuthorController extends AbstractController
         $jsonAuthorList = $cache->get($idCache, function(ItemInterface $item) use($authorRepository, $page, $limit, $serializer){
             $item->tag("authorCache");
             $authorList = $authorRepository->findAllWithPagination($page, $limit);
-            $context = SerializationContext::create()->setGroups(['getBooks']);
+            $context = SerializationContext::create()->setGroups(['getAuthors']);
             return $serializer->serialize($authorList, 'json', $context);
         });
 
@@ -59,7 +59,7 @@ class AuthorController extends AbstractController
         SerializerInterface $serializer,
         ): JsonResponse
     {
-        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $context = SerializationContext::create()->setGroups(['getAuthors']);
         $jsonAuthorList = $serializer->serialize($author, 'json', $context);
 
         return new JsonResponse(
@@ -90,13 +90,19 @@ class AuthorController extends AbstractController
         Request $request, 
         SerializerInterface $serializer,
         Author $currentAuthor, 
-        EntityManagerInterface $em
+        EntityManagerInterface $em,
+        TagAwareCacheInterface $cache,
         ): JsonResponse {
 
-        $updatedAuthor = $serializer->deserialize($request->getContent(), Author::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentAuthor]);
-        
-        $em->persist($updatedAuthor);
+        // $updatedAuthor = $serializer->deserialize($request->getContent(), Author::class, 'json', [AbstractNormalizer::OBJECT_TO_POPULATE => $currentAuthor]);
+        $newAuthor = $serializer->deserialize($request->getContent(), Author::class, 'json');
+
+        $currentAuthor->setLastname($newAuthor->getTitle());
+        $currentAuthor->setFirstname($newAuthor->getTitle());
+
+        $em->persist($currentAuthor);
         $em->flush();
+        $cache->invalidateTags(["authorCache"]);
 
         return new JsonResponse(null, JsonResponse::HTTP_NO_CONTENT);
     }
@@ -115,7 +121,7 @@ class AuthorController extends AbstractController
 
         $em->persist($author);
         $em->flush();
-        $context = SerializationContext::create()->setGroups(['getBooks']);
+        $context = SerializationContext::create()->setGroups(['getAuthors']);
         $jsonAuthor = $serializer->serialize($author, 'json', $context);
         $location = $urlGenerator->generate('app_author_id', ['id' => $author->getId()], UrlGeneratorInterface::ABSOLUTE_URL);
 
