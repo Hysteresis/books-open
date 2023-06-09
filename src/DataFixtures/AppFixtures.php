@@ -65,6 +65,7 @@ class AppFixtures extends Fixture
             $book->setTitle($faker->catchPhrase());
             $book->setCoverText("La couverture du livre numero : " .$i);
             $book->setAuthor($listAuthor[array_rand($listAuthor)]);
+            $book->setComment("Commentaire du livre et c'est le commentaire n°" . $i);
             $manager->persist($book);
         }
 
